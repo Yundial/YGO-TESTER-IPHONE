@@ -1,38 +1,38 @@
 name: Compila APK e sito
-
+ 
 on:
   push:
   workflow_dispatch:
-
+ 
 jobs:
   apk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+ 
       - name: Estrai il progetto
-        run: unzip -o -q progetto.zip
-
+        run: if [ -f progetto.zip ]; then unzip -o -q progetto.zip; else echo "progetto già estratto"; fi
+ 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
-
+ 
       - name: Scarica il motore (ocgcore + Lua)
         run: bash tools/fetch_core.sh
-
+ 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
-
+ 
       - name: Compila
         run: gradle assembleRelease --no-daemon --stacktrace
-
+ 
       - uses: actions/upload-artifact@v4
         with:
           name: YGO-Tester-APK
           path: app/build/outputs/apk/release/*.apk
-
+ 
   web:
     # Versione per iPhone (e qualsiasi browser): motore in WebAssembly, pubblicata su GitHub Pages
     runs-on: ubuntu-latest
@@ -45,20 +45,20 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-
+ 
       - name: Estrai il progetto
-        run: unzip -o -q progetto.zip
-
+        run: if [ -f progetto.zip ]; then unzip -o -q progetto.zip; else echo "progetto già estratto"; fi
+ 
       - uses: mymindstorm/setup-emsdk@v14
         with:
           version: 3.1.50
-
+ 
       - name: Compila il motore in WebAssembly
         run: |
           bash tools/fetch_core.sh
           emcmake cmake -S app/src/main/cpp -B build-wasm -DCMAKE_BUILD_TYPE=Release
           cmake --build build-wasm -j4
-
+ 
       - name: Scarica carte, testi italiani ed effetti
         run: |
           git clone -q https://github.com/ProjectIgnis/CardScripts.git cs && git -C cs checkout -q 2bd02f71383b87d7dee174909a96d10491930c45
@@ -71,24 +71,24 @@ jobs:
           python3 -c "import json;json.load(open('it.json'))" 2>/dev/null && ARGS="$ARGS --it it.json"
           python3 -c "import json;json.load(open('en.json'))" 2>/dev/null && ARGS="$ARGS --en en.json"
           python3 tools/build_web_data.py --out webdata --cdb cards.cdb release-betb.cdb --scripts cs --assets app/src/main/assets $ARGS
-
+ 
       - name: Prepara il sito
         run: bash tools/assemble_site.sh build-wasm webdata site ${{ github.run_number }}
-
+ 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
       - id: deploy
         uses: actions/deploy-pages@v4
-
+ 
   motore:
     # Verifica il motore C++: compila e fa giocare i bot con i mazzi dell'app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Estrai il progetto
-        run: unzip -o -q progetto.zip
+        run: if [ -f progetto.zip ]; then unzip -o -q progetto.zip; else echo "progetto già estratto"; fi
       - name: Scarica database e script (versioni fissate)
         run: |
           git clone -q https://github.com/ProjectIgnis/CardScripts.git cs && git -C cs checkout -q 2bd02f71383b87d7dee174909a96d10491930c45
