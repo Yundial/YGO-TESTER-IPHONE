@@ -1,0 +1,103 @@
+name: Compila APK e sito
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Estrai il progetto
+        run: unzip -o -q progetto.zip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Scarica il motore (ocgcore + Lua)
+        run: bash tools/fetch_core.sh
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Compila
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YGO-Tester-APK
+          path: app/build/outputs/apk/release/*.apk
+
+  web:
+    # Versione per iPhone (e qualsiasi browser): motore in WebAssembly, pubblicata su GitHub Pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Estrai il progetto
+        run: unzip -o -q progetto.zip
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.50
+
+      - name: Compila il motore in WebAssembly
+        run: |
+          bash tools/fetch_core.sh
+          emcmake cmake -S app/src/main/cpp -B build-wasm -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-wasm -j4
+
+      - name: Scarica carte, testi italiani ed effetti
+        run: |
+          git clone -q https://github.com/ProjectIgnis/CardScripts.git cs && git -C cs checkout -q 2bd02f71383b87d7dee174909a96d10491930c45
+          B=https://raw.githubusercontent.com/ProjectIgnis/BabelCDB/781ec580fb82ced7cd17bae290ee2985824a0def
+          curl -fsSL -o cards.cdb $B/cards.cdb
+          curl -fsSL -o release-betb.cdb $B/release-betb.cdb
+          curl -fsSL -o it.json "https://db.ygoprodeck.com/api/v7/cardinfo.php?language=it" || echo "testi italiani non disponibili"
+          curl -fsSL -o en.json "https://db.ygoprodeck.com/api/v7/cardinfo.php" || echo "codici di stampa non disponibili"
+          ARGS=""
+          python3 -c "import json;json.load(open('it.json'))" 2>/dev/null && ARGS="$ARGS --it it.json"
+          python3 -c "import json;json.load(open('en.json'))" 2>/dev/null && ARGS="$ARGS --en en.json"
+          python3 tools/build_web_data.py --out webdata --cdb cards.cdb release-betb.cdb --scripts cs --assets app/src/main/assets $ARGS
+
+      - name: Prepara il sito
+        run: bash tools/assemble_site.sh build-wasm webdata site ${{ github.run_number }}
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  motore:
+    # Verifica il motore C++: compila e fa giocare i bot con i mazzi dell'app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Estrai il progetto
+        run: unzip -o -q progetto.zip
+      - name: Scarica database e script (versioni fissate)
+        run: |
+          git clone -q https://github.com/ProjectIgnis/CardScripts.git cs && git -C cs checkout -q 2bd02f71383b87d7dee174909a96d10491930c45
+          curl -sSL -o cards.cdb https://raw.githubusercontent.com/ProjectIgnis/BabelCDB/781ec580fb82ced7cd17bae290ee2985824a0def/cards.cdb
+          curl -sSL -o release-betb.cdb https://raw.githubusercontent.com/ProjectIgnis/BabelCDB/781ec580fb82ced7cd17bae290ee2985824a0def/release-betb.cdb
+          python3 tools/gen_cards_bin.py cards.cdb release-betb.cdb cards.bin
+      - name: Compila e prova
+        run: |
+          bash tools/fetch_core.sh
+          cmake -S app/src/main/cpp -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j4
+          python3 tools/test_bot_decks.py build/duel_test cards.bin cs app/src/main/assets/bot_decks.json
